@@ -104,6 +104,10 @@ pub struct GwConnectTarget {
     pub gw_pass: String,
     /// Optional smart-card credentials for HTTP Negotiate Kerberos PKINIT authentication.
     pub smart_card: Option<Box<GwSmartCardCredentials>>,
+    /// Pluggable authentication cookie presented to the gateway in place of HTTP authentication.
+    ///
+    /// The WebSocket and dual HTTP transports support it. RPC-over-HTTP does not.
+    pub paa_cookie: Option<String>,
 
     pub server: String,
 }
@@ -159,6 +163,15 @@ pub type GwConsentCallback<'a> = dyn FnMut(&str) -> bool + Send + 'a;
 
 type Error = ironrdp_error::Error<GwErrorKind>;
 
+/// Encodes a cookie for `HTTP_TUNNEL_PACKET_OPTIONAL` as UTF-16LE with a terminating NUL, the form `mstsc.exe` sends.
+fn encode_paa_cookie(cookie: &str) -> Vec<u8> {
+    cookie
+        .encode_utf16()
+        .chain(core::iter::once(0))
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
 /// Gateway authentication selected for the current HTTP connection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GwSessionAuthentication {
@@ -167,6 +180,8 @@ pub enum GwSessionAuthentication {
     Http,
     /// NTLM authentication completed with `HTTP_EXTENDED_AUTH_PACKET` messages.
     NtlmSspi,
+    /// A pluggable authentication cookie presented when the tunnel is created.
+    Paa,
 }
 
 /// An extended authentication method advertised by the gateway.
@@ -682,6 +697,7 @@ impl GwConn {
             extended_auth: match session_authentication {
                 GwSessionAuthentication::Http => HttpExtendedAuth::HTTP_EXTENDED_AUTH_NONE,
                 GwSessionAuthentication::NtlmSspi => HttpExtendedAuth::HTTP_EXTENDED_AUTH_SSPI_NTLM,
+                GwSessionAuthentication::Paa => HttpExtendedAuth::HTTP_EXTENDED_AUTH_PAA,
             },
             ..HandshakeReqPkt::default()
         };
@@ -715,7 +731,13 @@ impl GwConn {
                 ));
             }
             GwSessionAuthentication::NtlmSspi => self.extended_auth_sspi_ntlm().await?,
-            GwSessionAuthentication::Http => {}
+            GwSessionAuthentication::Paa if !resp.extended_auth.contains(HttpExtendedAuth::HTTP_EXTENDED_AUTH_PAA) => {
+                return Err(Error::new(
+                    "Handshake",
+                    GwErrorKind::UnsupportedExtendedAuthentication(GwExtendedAuthentication::PluggableAuthentication),
+                ));
+            }
+            GwSessionAuthentication::Http | GwSessionAuthentication::Paa => {}
         }
 
         Ok(session_authentication)
@@ -782,6 +804,7 @@ impl GwConn {
             caps: HttpCapsTy::MessagingConsentSign.as_u32() | HttpCapsTy::Reauth.as_u32(),
             fields_present: 0,
             reauth_tunnel_context,
+            paa_cookie: self.target.paa_cookie.as_deref().map(encode_paa_cookie),
             ..TunnelReqPkt::default()
         };
         self.send_packet(&req).await?;

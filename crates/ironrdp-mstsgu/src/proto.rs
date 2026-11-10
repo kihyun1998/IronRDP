@@ -188,6 +188,9 @@ impl Decode<'_> for HandshakeRespPkt {
     }
 }
 
+/// 2.2.5.3.6 `HTTP_TUNNEL_PACKET_FIELD_PAA_COOKIE`.
+const HTTP_TUNNEL_PACKET_FIELD_PAA_COOKIE: u16 = 0x1;
+
 /// 2.2.5.3.6 `HTTP_TUNNEL_PACKET_FIELD_REAUTH`.
 const HTTP_TUNNEL_PACKET_FIELD_REAUTH: u16 = 0x2;
 
@@ -198,6 +201,7 @@ pub(crate) struct TunnelReqPkt {
     pub fields_present: u16,
     pub _reserved: u16,
     pub reauth_tunnel_context: Option<u64>,
+    pub paa_cookie: Option<Vec<u8>>,
 }
 
 impl Encode for TunnelReqPkt {
@@ -211,9 +215,15 @@ impl Encode for TunnelReqPkt {
         };
         hdr.encode(dst)?;
 
-        let fields_present = self.fields_present & !HTTP_TUNNEL_PACKET_FIELD_REAUTH
+        let fields_present = self.fields_present
+            & !(HTTP_TUNNEL_PACKET_FIELD_REAUTH | HTTP_TUNNEL_PACKET_FIELD_PAA_COOKIE)
             | if self.reauth_tunnel_context.is_some() {
                 HTTP_TUNNEL_PACKET_FIELD_REAUTH
+            } else {
+                0
+            }
+            | if self.paa_cookie.is_some() {
+                HTTP_TUNNEL_PACKET_FIELD_PAA_COOKIE
             } else {
                 0
             };
@@ -223,6 +233,11 @@ impl Encode for TunnelReqPkt {
         dst.write_u16(self._reserved);
         if let Some(tunnel_context) = self.reauth_tunnel_context {
             dst.write_u64(tunnel_context);
+        }
+        if let Some(cookie) = &self.paa_cookie {
+            let cookie_len: u16 = cast_int!("PAA cookie length", cookie.len(), in: dst)?;
+            dst.write_u16(cookie_len);
+            dst.write_slice(cookie);
         }
         Ok(())
     }
@@ -237,6 +252,7 @@ impl Encode for TunnelReqPkt {
             + 2 /* fieldsPresent */
             + 2 /* reserved */
             + self.reauth_tunnel_context.map_or(0, |_| 8 /* reauthTunnelContext */)
+            + self.paa_cookie.as_ref().map_or(0, |cookie| 2 /* cbLen */ + cookie.len())
     }
 }
 

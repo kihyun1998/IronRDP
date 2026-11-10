@@ -494,6 +494,7 @@ fn gateway_target(address: core::net::SocketAddr) -> GwConnectTarget {
         gw_user: "user".to_owned(),
         gw_pass: "pass".to_owned(),
         smart_card: None,
+        paa_cookie: None,
         server: "server.test".to_owned(),
     }
 }

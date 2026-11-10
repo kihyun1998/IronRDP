@@ -2978,6 +2978,7 @@ fn gateway_connect_target(config: &Config, gw: &crate::config::GatewayConfig) ->
         gw_user: gw.username.clone(),
         gw_pass: gw.password.clone(),
         smart_card: None,
+        paa_cookie: None,
         server: config.destination.name().to_owned(),
     }
 }

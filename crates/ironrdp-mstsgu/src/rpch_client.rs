@@ -53,6 +53,9 @@ impl RpchClient {
                 GwErrorKind::InvalidGwTarget,
             ));
         }
+        if target.paa_cookie.is_some() {
+            return Err(Error::new("RPC-over-HTTP PAA cookie", GwErrorKind::InvalidGwTarget));
+        }
         let gateway = parse_gateway_endpoint(&target.gw_endpoint)?;
         let (input, _) = open_rpch_gateway_stream(
             &target.gw_endpoint,

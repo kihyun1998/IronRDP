@@ -407,6 +407,99 @@ async fn extended_sspi_ntlm_requires_advertised_sspi_ntlm_capability() {
 }
 
 #[tokio::test]
+async fn paa_cookie_is_presented_in_the_handshake_and_tunnel_create() {
+    let (out_client, out_server) = tokio::io::duplex(4096);
+    let (in_client, in_server) = tokio::io::duplex(4096);
+    let out_server = tokio::spawn(mock_out_server(
+        out_server,
+        vec![
+            packet(2, &handshake_response_with_extended_auth(0, 0x0002)),
+            packet(5, &tunnel_response(0, &[])),
+            packet(7, &control_response(0)),
+            packet(9, &control_response(0)),
+        ],
+    ));
+    let in_server = tokio::spawn(async move {
+        let service = service_fn(move |mut request: Request<hyper::body::Incoming>| async move {
+            assert_eq!(request.method(), "RDG_IN_DATA");
+            if request.headers().get("content-type").is_none() {
+                return Ok::<_, Infallible>(response(StatusCode::OK, Bytes::new()));
+            }
+
+            for expected_packet_type in [1, 4, 6, 8] {
+                let frame = request
+                    .body_mut()
+                    .frame()
+                    .await
+                    .expect("IN request frame")
+                    .expect("IN request frame result")
+                    .into_data()
+                    .expect("IN request data frame");
+                assert_eq!(packet_type(&frame), expected_packet_type);
+                if expected_packet_type == 1 {
+                    // [MS-TSGU] 2.2.5.3.2 HTTP_EXTENDED_AUTH_PAA.
+                    assert_eq!(&frame[12..14], &0x0002u16.to_le_bytes());
+                }
+                if expected_packet_type == 4 {
+                    // [MS-TSGU] 2.2.5.3.6 presence bit, then the blob as mstsc.exe sends it: UTF-16LE with a NUL.
+                    assert_eq!(&frame[12..14], &0x0001u16.to_le_bytes());
+                    assert_eq!(&frame[16..], &[0x06, 0x00, 0x61, 0x00, 0x62, 0x00, 0x00, 0x00]);
+                }
+            }
+            Ok::<_, Infallible>(response(StatusCode::OK, Bytes::new()))
+        });
+        http1::Builder::new()
+            .serve_connection(TokioIo::new(in_server), service)
+            .await
+            .expect("serve IN");
+    });
+
+    let transport = GatewayTransport::connect(out_client, in_client)
+        .await
+        .expect("connect transport");
+    let client = match transport
+        .connect_tunnel_with_session_authentication(paa_target(), "client.test", 3389, GwSessionAuthentication::Paa)
+        .await
+    {
+        Ok(client) => client,
+        Err(error) => panic!("connect tunnel: {error}"),
+    };
+
+    drop(client);
+    out_server.await.expect("OUT task");
+    in_server.await.expect("IN task");
+}
+
+#[tokio::test]
+async fn paa_cookie_requires_the_gateway_to_advertise_pluggable_authentication() {
+    let (out_client, out_server) = tokio::io::duplex(4096);
+    let (in_client, in_server) = tokio::io::duplex(4096);
+    let out_server = tokio::spawn(mock_out_server(
+        out_server,
+        vec![packet(2, &handshake_response_with_extended_auth(0, 0x0004))],
+    ));
+    let in_server = tokio::spawn(mock_in_server_accepting_any_packets(in_server));
+
+    let transport = GatewayTransport::connect(out_client, in_client)
+        .await
+        .expect("connect transport");
+    let error = match transport
+        .connect_tunnel_with_session_authentication(paa_target(), "client.test", 3389, GwSessionAuthentication::Paa)
+        .await
+    {
+        Ok(_) => panic!("gateway without PAA"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error.kind(),
+        GwErrorKind::UnsupportedExtendedAuthentication(GwExtendedAuthentication::PluggableAuthentication)
+    ));
+    out_server.await.expect("OUT task");
+    in_server.await.expect("IN task");
+}
+
+#[tokio::test]
 async fn control_errors_preserve_gateway_hresult() {
     for (expected_packet_types, error_code, context, label) in [
         (&[1][..], 0x8007_59DA, "Handshake", "E_PROXY_RAP_ACCESSDENIED"),
@@ -748,8 +841,28 @@ fn test_target() -> GwConnectTarget {
         gw_user: "user".to_owned(),
         gw_pass: "pass".to_owned(),
         smart_card: None,
+        paa_cookie: None,
         server: "server.test".to_owned(),
     }
+}
+
+fn paa_target() -> GwConnectTarget {
+    GwConnectTarget {
+        paa_cookie: Some("ab".to_owned()),
+        ..test_target()
+    }
+}
+
+async fn mock_in_server_accepting_any_packets(stream: tokio::io::DuplexStream) {
+    let service = service_fn(move |mut request: Request<hyper::body::Incoming>| async move {
+        assert_eq!(request.method(), "RDG_IN_DATA");
+        while request.body_mut().frame().await.is_some() {}
+        Ok::<_, Infallible>(response(StatusCode::OK, Bytes::new()))
+    });
+    http1::Builder::new()
+        .serve_connection(TokioIo::new(stream), service)
+        .await
+        .expect("serve IN");
 }
 
 fn packet(packet_type: u16, payload: &[u8]) -> Vec<u8> {

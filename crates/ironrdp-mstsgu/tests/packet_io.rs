@@ -15,7 +15,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use ironrdp_mstsgu::test_support::GatewayTransport;
-use ironrdp_mstsgu::{GwClient, GwConnectTarget};
+use ironrdp_mstsgu::{GwClient, GwConnectTarget, GwErrorKind, GwSessionAuthentication};
 use ironrdp_tls::{CertificateValidation, CertificateValidationCallback};
 use tokio::sync::oneshot;
 use tokio_native_tls::TlsAcceptor;
@@ -168,6 +168,83 @@ async fn switching_protocols_keeps_websocket_transport() {
     );
 
     transport.close().await.expect("close websocket");
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn paa_cookie_replaces_http_authentication() {
+    let (out_client, out_server) = tokio::io::duplex(4096);
+    let (in_client, _in_server) = tokio::io::duplex(4096);
+
+    let server = tokio::spawn(async move {
+        let service = service_fn(move |request: Request<hyper::body::Incoming>| async move {
+            assert_eq!(request.method(), "RDG_OUT_DATA");
+            assert!(request.headers().get("authorization").is_none());
+            // Observed from mstsc.exe with `gatewaycredentialssource:i:5`.
+            assert_eq!(
+                request
+                    .headers()
+                    .get("rdg-auth-scheme")
+                    .expect("Rdg-Auth-Scheme header"),
+                "PAA"
+            );
+            Ok::<_, Infallible>(response(
+                StatusCode::SWITCHING_PROTOCOLS,
+                &[("connection", "Upgrade"), ("upgrade", "websocket")],
+                Bytes::new(),
+            ))
+        });
+        http1::Builder::new()
+            .serve_connection(TokioIo::new(out_server), service)
+            .with_upgrades()
+            .await
+            .expect("serve websocket");
+    });
+
+    let target = paa_target();
+    let transport = match GatewayTransport::connect_with_target(out_client, in_client, &target).await {
+        Ok(transport) => transport,
+        Err(error) => panic!("connect: {error}"),
+    };
+
+    assert_eq!(transport.session_authentication(), GwSessionAuthentication::Paa);
+    drop(transport);
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn rejected_paa_cookie_does_not_fall_back_to_http_authentication() {
+    let (out_client, out_server) = tokio::io::duplex(4096);
+    let (in_client, _in_server) = tokio::io::duplex(4096);
+    let requests = Arc::new(AtomicUsize::new(0));
+    let requests_for_service = Arc::clone(&requests);
+
+    let server = tokio::spawn(async move {
+        let service = service_fn(move |_request: Request<hyper::body::Incoming>| {
+            let requests = Arc::clone(&requests_for_service);
+            async move {
+                requests.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, Infallible>(response(
+                    StatusCode::UNAUTHORIZED,
+                    &[("www-authenticate", "NTLM")],
+                    Bytes::new(),
+                ))
+            }
+        });
+        http1::Builder::new()
+            .serve_connection(TokioIo::new(out_server), service)
+            .await
+            .expect("serve gateway");
+    });
+
+    let target = paa_target();
+    let error = match GatewayTransport::connect_with_target(out_client, in_client, &target).await {
+        Ok(_) => panic!("rejected PAA cookie"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error.kind(), GwErrorKind::HttpStatus(401)));
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
     server.await.expect("server task");
 }
 
@@ -457,6 +534,18 @@ fn gateway_target(address: core::net::SocketAddr) -> GwConnectTarget {
         gw_user: "user".to_owned(),
         gw_pass: "pass".to_owned(),
         smart_card: None,
+        paa_cookie: None,
+        server: "server.test".to_owned(),
+    }
+}
+
+fn paa_target() -> GwConnectTarget {
+    GwConnectTarget {
+        gw_endpoint: "gateway.test:443".to_owned(),
+        gw_user: String::new(),
+        gw_pass: String::new(),
+        smart_card: None,
+        paa_cookie: Some("ab".to_owned()),
         server: "server.test".to_owned(),
     }
 }

@@ -66,6 +66,44 @@ fn tunnel_request_without_reauth_context_clears_reauth_field_bit() {
 }
 
 #[test]
+fn tunnel_request_encodes_paa_cookie() {
+    let bytes = encode_to_vec(&TunnelReqPkt {
+        caps: 0x04,
+        paa_cookie: Some(vec![0x41, 0x00, 0x00, 0x00]),
+        ..TunnelReqPkt::default()
+    });
+
+    // [MS-TSGU] 2.2.5.3.6: PAACookie presence bit; 2.2.10.1: length-prefixed blob.
+    assert_eq!(
+        bytes,
+        [
+            0x04, 0x00, 0x00, 0x00, // packetType, reserved
+            0x16, 0x00, 0x00, 0x00, // packet length
+            0x04, 0x00, 0x00, 0x00, // capsFlags
+            0x01, 0x00, // fieldsPresent
+            0x00, 0x00, // reserved
+            0x04, 0x00, // cbLen
+            0x41, 0x00, 0x00, 0x00, // PAACookie
+        ]
+    );
+}
+
+#[test]
+fn tunnel_request_places_reauth_context_before_paa_cookie() {
+    let reauth_tunnel_context = 0x1122_3344_5566_7788;
+    let bytes = encode_to_vec(&TunnelReqPkt {
+        reauth_tunnel_context: Some(reauth_tunnel_context),
+        paa_cookie: Some(vec![0x41, 0x00]),
+        ..TunnelReqPkt::default()
+    });
+
+    // [MS-TSGU] 2.2.10.19 lays out reauthTunnelContext ahead of PAACookie.
+    assert_eq!(&bytes[12..14], &0x3u16.to_le_bytes());
+    assert_eq!(&bytes[16..24], &reauth_tunnel_context.to_le_bytes());
+    assert_eq!(&bytes[24..], &[0x02, 0x00, 0x41, 0x00]);
+}
+
+#[test]
 fn tunnel_request_encodes_reauth_context() {
     let reauth_tunnel_context = 0x1122_3344_5566_7788;
     let bytes = encode_to_vec(&TunnelReqPkt {

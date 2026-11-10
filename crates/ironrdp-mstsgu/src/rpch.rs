@@ -1843,6 +1843,11 @@ impl RpchStream {
         In: AsyncRead + AsyncWrite + Send + Unpin + 'static,
         Provider: RpchStreamProvider<Out, In> + Send + 'static,
     {
+        // UNTESTED: a PAA cookie must never be dropped silently on this transport, which has no way to send it.
+        // When changing the gateway authentication options, keep this rejection or implement the cookie here.
+        if target.paa_cookie.is_some() {
+            return Err(Error::new("RPC-over-HTTP PAA cookie", GwErrorKind::InvalidGwTarget));
+        }
         let settings = RpchV2Settings::default();
         let mut session = rpch_connect(
             out,
@@ -2372,6 +2377,7 @@ mod tests {
             gw_user: "CONTOSO\\alice".to_owned(),
             gw_pass: "secret".to_owned(),
             smart_card: None,
+            paa_cookie: None,
             server: "rdp.contoso.com".to_owned(),
         };
         let stream = RpchStream::connect(

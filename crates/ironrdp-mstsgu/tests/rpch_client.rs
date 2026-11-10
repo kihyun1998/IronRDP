@@ -857,12 +857,26 @@ async fn tls_listener() -> (TcpListener, TlsAcceptor) {
     (listener, acceptor)
 }
 
+#[tokio::test]
+async fn paa_cookie_is_rejected_rather_than_ignored() {
+    let mut target = gateway_target(1);
+    target.paa_cookie = Some("ab".to_owned());
+
+    let error = match RpchClient::connect(&target, "backend:3388").await {
+        Ok(_) => panic!("RPC-over-HTTP with a PAA cookie"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error.kind(), GwErrorKind::InvalidGwTarget));
+}
+
 fn gateway_target(port: u16) -> GwConnectTarget {
     GwConnectTarget {
         gw_endpoint: format!("127.0.0.1:{port}"),
         gw_user: "user".to_owned(),
         gw_pass: "pass".to_owned(),
         smart_card: None,
+        paa_cookie: None,
         server: "rdp-server.test".to_owned(),
     }
 }

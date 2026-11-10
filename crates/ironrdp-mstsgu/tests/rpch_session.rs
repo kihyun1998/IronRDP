@@ -6,6 +6,7 @@ type Error = ironrdp_error::Error<GwErrorKind>;
 
 #[derive(Debug)]
 enum GwErrorKind {
+    InvalidGwTarget,
     InvalidCertificateValidation,
     Connect,
     GatewayCode(u32),
@@ -35,6 +36,7 @@ impl GwErrorExt for Error {
 impl fmt::Display for GwErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidGwTarget => f.write_str("invalid GW Target"),
             Self::InvalidCertificateValidation => f.write_str("invalid certificate validation configuration"),
             Self::Connect => f.write_str("connection error"),
             Self::GatewayCode(code) => write!(f, "gateway error 0x{code:08x}"),
@@ -62,6 +64,7 @@ struct GwConnectTarget {
     gw_user: String,
     gw_pass: String,
     smart_card: Option<GwSmartCardCredentials>,
+    paa_cookie: Option<String>,
     server: String,
 }
 

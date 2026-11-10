@@ -963,8 +963,18 @@ pub(crate) async fn open_test_transport(
         gw_user: "user".to_owned(),
         gw_pass: "pass".to_owned(),
         smart_card: None,
+        paa_cookie: None,
         server: "server.test".to_owned(),
     };
+    open_test_transport_with_target(out_stream, in_stream, &target).await
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) async fn open_test_transport_with_target(
+    out_stream: tokio::io::DuplexStream,
+    in_stream: tokio::io::DuplexStream,
+    target: &GwConnectTarget,
+) -> Result<GatewayTransport, Error> {
     let client_addr = "127.0.0.1:0"
         .parse()
         .map_err(|e| custom_err!("parse test client address", e))?;
@@ -972,7 +982,7 @@ pub(crate) async fn open_test_transport(
         Box::new(out_stream),
         client_addr,
         "gateway.test",
-        &target,
+        target,
         move || async move {
             let stream: GatewayStream = Box::new(in_stream);
             Ok(stream)
@@ -1061,7 +1071,13 @@ async fn authenticated_rdg_request(
     requested_session_authentication: Option<GwSessionAuthentication>,
 ) -> Result<AuthenticatedRdgResponse, Error> {
     let mut http_auth: Option<GatewayHttpAuth> = None;
-    let mut session_authentication = requested_session_authentication.unwrap_or_default();
+    let mut session_authentication = requested_session_authentication.unwrap_or_else(|| {
+        if context.target.paa_cookie.is_some() {
+            GwSessionAuthentication::Paa
+        } else {
+            GwSessionAuthentication::Http
+        }
+    });
     let mut authorization =
         (session_authentication == GwSessionAuthentication::NtlmSspi).then(|| "SSPI_NTLM".to_owned());
     let mut use_basic = false;
@@ -1094,6 +1110,15 @@ async fn authenticated_rdg_request(
                 response,
                 session_authentication,
             });
+        }
+
+        if session_authentication == GwSessionAuthentication::Paa {
+            let status = response.status();
+            drain_response_body(response.into_body(), "drain rdg paa rejection body").await?;
+            return Err(Error::new(
+                "rdg paa authentication",
+                GwErrorKind::HttpStatus(status.as_u16()),
+            ));
         }
 
         if requested_session_authentication == Some(GwSessionAuthentication::NtlmSspi) {
@@ -1192,6 +1217,9 @@ fn build_rdg_request(
         .header(hyper::header::ACCEPT, "*/*")
         .header(hyper::header::CACHE_CONTROL, "no-cache")
         .header(hyper::header::PRAGMA, "no-cache");
+    if context.target.paa_cookie.is_some() {
+        request = request.header("Rdg-Auth-Scheme", "PAA");
+    }
     if let Some(cookie_header) = cookies.header_value() {
         request = request.header(hyper::header::COOKIE, cookie_header);
     }

@@ -26,6 +26,17 @@ impl GatewayTransport {
             .map_err(|error| error.to_string())
     }
 
+    /// Open a mock transport for a specific gateway target.
+    pub async fn connect_with_target(
+        out_stream: tokio::io::DuplexStream,
+        in_stream: tokio::io::DuplexStream,
+        target: &GwConnectTarget,
+    ) -> Result<Self, Error> {
+        crate::packet_io::open_test_transport_with_target(out_stream, in_stream, target)
+            .await
+            .map(Self)
+    }
+
     /// Open an HTTPS gateway transport with the production TLS connection path.
     pub async fn connect_tls(
         target: &GwConnectTarget,
