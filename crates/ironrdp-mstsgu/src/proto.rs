@@ -444,7 +444,7 @@ impl Encode for TunnelAuthPkt {
     }
 
     fn size(&self) -> usize {
-        PktHdr::default().size() + 4 + 2 * (self.client_name.len() + 1)
+        PktHdr::default().size() + 4 + 2 * (self.client_name.encode_utf16().count() + 1)
     }
 }
 
@@ -546,7 +546,13 @@ impl Encode for ChannelPkt {
     }
 
     fn size(&self) -> usize {
-        PktHdr::default().size() + 6 + self.resources.iter().map(|x| 2 + 2 * (x.len() + 1)).sum::<usize>()
+        PktHdr::default().size()
+            + 6
+            + self
+                .resources
+                .iter()
+                .map(|x| 2 + 2 * (x.encode_utf16().count() + 1))
+                .sum::<usize>()
     }
 }
 

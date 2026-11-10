@@ -16,7 +16,7 @@ mod proto;
 use ironrdp_core::{Decode, Encode, ReadCursor, WriteCursor};
 use ironrdp_mstsgu::GwErrorKind;
 use ironrdp_mstsgu::{ChannelClosePkt, ReauthMessagePkt, ServiceMessagePkt, gateway_code_label};
-use proto::{ExtendedAuthPkt, HandshakeRespPkt, HttpExtendedAuth, TunnelReqPkt};
+use proto::{ChannelPkt, ExtendedAuthPkt, HandshakeRespPkt, HttpExtendedAuth, TunnelAuthPkt, TunnelReqPkt};
 
 fn encode_to_vec(payload: &impl Encode) -> Vec<u8> {
     let mut buf = vec![0u8; payload.size()];
@@ -24,6 +24,30 @@ fn encode_to_vec(payload: &impl Encode) -> Vec<u8> {
     payload.encode(&mut cur).expect("encode");
     assert_eq!(cur.pos(), payload.size());
     buf
+}
+
+#[test]
+fn tunnel_auth_length_counts_utf16_units_of_a_non_ascii_client_name() {
+    let encoded = encode_to_vec(&TunnelAuthPkt {
+        fields_present: 0,
+        client_name: "서버-1".to_owned(),
+    });
+
+    // Header, flags, name length, then four UTF-16 units and a NUL.
+    assert_eq!(encoded.len(), 8 + 2 + 2 + 2 * 5);
+    assert_eq!(&encoded[4..8], &22u32.to_le_bytes());
+}
+
+#[test]
+fn channel_length_counts_utf16_units_of_a_non_ascii_resource() {
+    let encoded = encode_to_vec(&ChannelPkt {
+        resources: vec!["서버".to_owned()],
+        port: 3389,
+        protocol: 3,
+    });
+
+    // Header, fixed fields, name length, then two UTF-16 units and a NUL.
+    assert_eq!(encoded.len(), 8 + 6 + 2 + 2 * 3);
 }
 
 fn decode_body<'a, T: Decode<'a>>(bytes: &'a [u8]) -> T {

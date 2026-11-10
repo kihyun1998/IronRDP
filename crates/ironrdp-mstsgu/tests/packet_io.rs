@@ -188,7 +188,10 @@ async fn paa_cookie_replaces_http_authentication() {
                     .expect("Rdg-Auth-Scheme header"),
                 "PAA"
             );
-            assert_eq!(request.headers().get("user-agent").expect("User-Agent"), "MS-RDGateway/1.0");
+            assert_eq!(
+                request.headers().get("user-agent").expect("User-Agent"),
+                "MS-RDGateway/1.0"
+            );
             assert_eq!(
                 request.headers().get("rdg-correlation-id").expect("Rdg-Correlation-Id"),
                 request.headers().get("rdg-connection-id").expect("Rdg-Connection-Id")
