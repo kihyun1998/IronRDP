@@ -1218,7 +1218,14 @@ fn build_rdg_request(
         .header(hyper::header::CACHE_CONTROL, "no-cache")
         .header(hyper::header::PRAGMA, "no-cache");
     if context.target.paa_cookie.is_some() {
-        request = request.header("Rdg-Auth-Scheme", "PAA");
+        // A gateway that authenticates cookies can close the connection without these, which
+        // `mstsc.exe` always sends.
+        request = request
+            .header("Rdg-Auth-Scheme", "PAA")
+            .header(hyper::header::USER_AGENT, "MS-RDGateway/1.0")
+            .header("Rdg-Correlation-Id", context.connection_id)
+            .header("Rdg-Client-Appbuild", "10.0.26100")
+            .header("Rdg-Client-Generation", "1");
     }
     if let Some(cookie_header) = cookies.header_value() {
         request = request.header(hyper::header::COOKIE, cookie_header);

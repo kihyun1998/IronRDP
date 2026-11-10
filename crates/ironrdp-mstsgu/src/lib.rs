@@ -163,6 +163,14 @@ pub type GwConsentCallback<'a> = dyn FnMut(&str) -> bool + Send + 'a;
 
 type Error = ironrdp_error::Error<GwErrorKind>;
 
+/// The capabilities `mstsc.exe` announces when it presents a cookie.
+const PAA_CAPS: u32 = HttpCapsTy::QuarSOH.as_u32()
+    | HttpCapsTy::IdleTimeout.as_u32()
+    | HttpCapsTy::MessagingConsentSign.as_u32()
+    | HttpCapsTy::MessagingServiceMsg.as_u32()
+    | HttpCapsTy::Reauth.as_u32()
+    | HttpCapsTy::UdpTransport.as_u32();
+
 /// Encodes a cookie for `HTTP_TUNNEL_PACKET_OPTIONAL` as UTF-16LE with a terminating NUL, the form `mstsc.exe` sends.
 fn encode_paa_cookie(cookie: &str) -> Vec<u8> {
     cookie
@@ -801,7 +809,11 @@ impl GwConn {
     ) -> Result<(), Error> {
         let req = TunnelReqPkt {
             // No observed server works without this capability.
-            caps: HttpCapsTy::MessagingConsentSign.as_u32() | HttpCapsTy::Reauth.as_u32(),
+            caps: if self.target.paa_cookie.is_some() {
+                PAA_CAPS
+            } else {
+                HttpCapsTy::MessagingConsentSign.as_u32() | HttpCapsTy::Reauth.as_u32()
+            },
             fields_present: 0,
             reauth_tunnel_context,
             paa_cookie: self.target.paa_cookie.as_deref().map(encode_paa_cookie),

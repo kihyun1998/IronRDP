@@ -441,6 +441,8 @@ async fn paa_cookie_is_presented_in_the_handshake_and_tunnel_create() {
                     assert_eq!(&frame[12..14], &0x0002u16.to_le_bytes());
                 }
                 if expected_packet_type == 4 {
+                    // The capabilities mstsc.exe announces with a cookie.
+                    assert_eq!(&frame[8..12], &0x3fu32.to_le_bytes());
                     // [MS-TSGU] 2.2.5.3.6 presence bit, then the blob as mstsc.exe sends it: UTF-16LE with a NUL.
                     assert_eq!(&frame[12..14], &0x0001u16.to_le_bytes());
                     assert_eq!(&frame[16..], &[0x06, 0x00, 0x61, 0x00, 0x62, 0x00, 0x00, 0x00]);

@@ -274,7 +274,7 @@ impl HttpCapsTy {
         clippy::as_conversions,
         reason = "guarantees discriminant layout, and as is the only way to cast enum -> primitive"
     )]
-    pub(crate) fn as_u32(self) -> u32 {
+    pub(crate) const fn as_u32(self) -> u32 {
         self as u32
     }
 }
